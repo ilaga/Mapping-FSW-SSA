@@ -121,15 +121,6 @@ pse.pred = subset(pse.dat.fit, is.na(pse.dat.fit$pse))
 
 
 
-
-
-
-
-
-
-
-
-
 pse.obs = subset(pse.dat.fit, !is.na(pse))
 pse.obs = pse.obs[,-6]
 pse.obs = pse.obs[complete.cases(pse.obs),]
@@ -137,7 +128,6 @@ pse.obs[,c(7:100)] = scale(pse.obs[,c(7:100)])
 pse.obs$row.id = 1:nrow(pse.obs)
 spatial.ind = unique(pse.obs$ID)
 cov.out = cov.names
-## Decide what to keep (otherwise c())
 cov.in = c("City", "ref_pop_log", "City * ref_pop_log")
 stop = FALSE
 dic.final.vec = rep(NA, length(cov.out))
@@ -508,15 +498,23 @@ gg.impute = ggplot(tmp.dat) + geom_point(aes(x = jitter(Est), y = jitter(Truth))
   xlab("Imputed Value") + ylab("Observed Value") +
   geom_abline(slope = 1, intercept = 0, size = 1.5) +
   theme_grey(base_size = 15) +
-  theme(axis.text = element_text(size = 18),
-        axis.title = element_text(size = 22, face = "bold"))
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1) +
+  xlim()
 gg.impute
-ggsave("./Figures/MICE_impute_cart.jpg", gg.impute, width = 20, height = 10)
+ggsave("../Figures/MICE_impute.jpg", gg.impute, width = 10, height = 10)
 
 
-save.image("../Data/DHS/Imputation_res_norm_predict_2.RData")
+save.image("../Data/DHS/DHS_cart_imputation_results.RData")
 
 # Try spatial imputation --------------------------------------------------
+
 
 gadm.36 = readRDS("../Data/Shapefiles/gadm36_adm1_africa_dhs.rds")
 gadm.36 = subset(gadm.36, !is.na(mv133_median_CR))
@@ -541,8 +539,9 @@ nb.mat.orig = nb2mat(nb.RK.orig, style = "B")
 
 which.ind = which(names(gadm.new) %in% cov.in.dhs.and.aux)
 
+## The save.image is useful to handle R crashes
 save.image("../Data/DHS/Spatial_impute_prep.RData")
-car.stan = rstan::stan_model("./R/Test Code/Sparse_CAR.stan")
+car.stan = rstan::stan_model("./R/Covariates 02/Sparse_CAR.stan")
 
 for(i in which.ind){
   all.phi = gadm.new@data[, i]
@@ -584,7 +583,9 @@ for(i in which.ind){
     print(100 * iter / true.known.n)
   }
 }
-
+plot(loo.est, 100*(phi.known.true - loo.est)/phi.known.true)
+abline(h = 0, col = "red")
+save.image(file = "../Data/DHS/DHS_spatial_imputation_results.RData")  
 
 library(ggplot2)
 truth.in = scale(phi.known.true)
@@ -595,7 +596,14 @@ loo.plot = ggplot(df) + geom_point(aes(x = loo, y = truth)) +
   xlab("Imputed Value") + ylab("Observed Value") +
   geom_abline(slope = 1, intercept = 0, size = 1.5) +
   theme_grey(base_size = 15) +
-  theme(axis.text = element_text(size = 18),
-        axis.title = element_text(size = 22, face = "bold"))
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1) +
+  xlim(min(df) - 0.01, max(df) + 0.01) + ylim(min(df) - 0.01, max(df) + 0.01)
 loo.plot
-ggsave("./Figures/Spatial_impute.jpg", loo.plot, width = 20, height = 10)
+ggsave("../Figures/Spatial_impute.jpg", loo.plot, width = 10, height = 10)
