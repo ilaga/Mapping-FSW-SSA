@@ -6,25 +6,14 @@ library(lme4)
 library(ggplot2)
 library(brms)
 library(optimx)
-library(caret)
-library(INLA)
+library(gridExtra)
 
 
 rm(list=ls())
 pse.dat.fit = readRDS("../Data/PSE_Prep.rds")
 gadm.cov = readRDS("../Data/Shapefile_Prep.rds")
 nb.mat = readRDS("../Data/nb_mat_Prep.rds")
-## Plot average prevalence in each district
-gadm.tmp = gadm.cov
-gadm.tmp$Prev = NA
-for(i in 1:nrow(gadm.tmp)){
-  match.ind = which(pse.dat.fit$ID == i)
-  if(length(match.ind) > 0){
-    gadm.tmp$Prev[i] = weighted.mean(pse.dat.fit$Prev_comb[match.ind],
-                                     pse.dat.fit$ref_pop_joined[match.ind],
-                                     na.rm = T)
-  }
-}
+
 
 
 ## Combined pse and gadm.cov
@@ -52,22 +41,15 @@ prev.vs.prev.gg
 ggsave("../Figures/Prev_vs_prev.jpg", prev.vs.prev.gg, width = 10, height = 10)
 
 
-if(1){ ## Include rest of gadm.cov
-  combined = rbind.fill(pse.dat.fit, gadm.cov@data)
-  combined$ref_pop = round(combined$ref_pop)
-}else{
-  combined = pse.dat.fit
-  combined$ref_pop = round(combined$ref_pop)
-}
+combined = rbind.fill(pse.dat.fit, gadm.cov@data)
+combined$ref_pop = round(combined$ref_pop)
+
 
 pse.dat.fit = combined[,c("pse", "ref_pop", "ID", "method_std",
-                          "ISO", "NAME_1", "City",
+                          "ISO", "NAME_1", "City", "lower.uncertainty.measure",
+                          "upper.uncertainty.measure", "type.of.uncertainty.measure",
                           names(combined)[c(286:389)])]
 pse.dat.fit = pse.dat.fit[,-which(names(pse.dat.fit) == "ID.1")]
-
-## Remove non-popweighted variables
-names(pse.dat.fit)[c(8,9,17,18,24,32,33:56,81,83,85,87,89,91,93,95,103,105,107,109)]
-pse.dat.fit = pse.dat.fit[,-c(8,9,17,18,24,32,33:56,81,83,85,87,89,91,93,95,103,105,107,109)]
 
 ## Identify variables that need log transform
 # par(ask = T)
@@ -141,6 +123,8 @@ pse.dat.fit = pse.dat.fit[,-which(names(pse.dat.fit) %in% c("cropland_irrigated"
                                                             "travel_to_50k_popweighted",
                                                             "tree_cover_becto",
                                                             "tree_cover_bdcto",
+                                                            "tree_cover_necto",
+                                                            "tree_cover_ndcto",
                                                             "mosaic_tree",
                                                             "water",
                                                             "shrub_cover",
@@ -148,6 +132,8 @@ pse.dat.fit = pse.dat.fit[,-which(names(pse.dat.fit) %in% c("cropland_irrigated"
                                                             "mosaic_herbaceous",
                                                             "shrubland",
                                                             "grassland",
+                                                            "snow_ice",
+                                                            "lichens",
                                                             "wc2.1_2.5m_bio_14_popweighted",
                                                             "wc2.1_2.5m_bio_19_popweighted",
                                                             "wc2.1_2.5m_bio_17_popweighted",
@@ -155,14 +141,7 @@ pse.dat.fit = pse.dat.fit[,-which(names(pse.dat.fit) %in% c("cropland_irrigated"
 
 
 ## Now scale
-cov.names = names(pse.dat.fit)[c(8:48)]
-## Remove correlated variables
-rm.var = caret::findCorrelation(cor(pse.dat.fit[,cov.names], use = "pairwise.complete.obs"),
-                                cutoff = 0.8, exact = TRUE)
-cov.names[rm.var]
-cov.names = cov.names[-rm.var]
-## Replace NL_quant50 with NL_mean, all NL highly correlated
-cov.names[8] = "NL_mean"
+cov.names = names(pse.dat.fit)[c(11:89)]
 
 single.subnational.ind = which(is.na(pse.dat.fit$pse))
 scale.info = scale(pse.dat.fit[single.subnational.ind, cov.names])
@@ -173,16 +152,20 @@ for(k in 1:length(cov.names)){
 which.incomplete = which(!complete.cases(pse.dat.fit[,cov.names[-1]]))
 pse.dat.fit$NAME_1[which.incomplete]
 
-pse.dat.fit$prev = pse.dat.fit$pse / pse.dat.fit$ref_pop
-cov.names = c(cov.names, "City")
-pse.dat.fit$logit_prev = qlogis(pse.dat.fit$prev)
-pse.sub = subset(pse.dat.fit, !is.na(pse.dat.fit$pse))
-pse.pred = subset(pse.dat.fit, is.na(pse.dat.fit$pse))
-saveRDS(pse.dat.fit, file = "../Data/Final_pse_dat_fit.rds")
-saveRDS(pse.sub, file = "../Data/Final_brms_data_for_fitting.rds")
-saveRDS(pse.pred, file = "../Data/Final_brms_data_for_prediction.rds")
+## Remove variables with missing values
+which.miss = names(which(colSums(is.na(pse.dat.fit[,cov.names])) > 0))
+cov.names = cov.names[-which(cov.names %in% which.miss)]
 
+cov.names = c(cov.names, "City", "City * ref_pop_log")
+pse.dat.fit$prev = pse.dat.fit$pse / pse.dat.fit$ref_pop
+pse.dat.fit$logit_prev = qlogis(pse.dat.fit$prev)
 pse.obs = subset(pse.dat.fit, !is.na(pse))
+pse.pred = subset(pse.dat.fit, is.na(pse))
+pse.pred$City = 0
+saveRDS(pse.dat.fit, file = "../Data/Final_pse_dat_fit.rds")
+saveRDS(pse.obs, file = "../Data/Final_brms_data_for_fitting.rds")
+saveRDS(pse.pred, file = "../Data/Final_brms_data_for_prediction.rds")
+saveRDS(cov.names, file = "../Data/cov_names.rds")
 
 
 # Examine variance of prevalences -----------------------------------------
@@ -266,423 +249,390 @@ ggsave("../Figures/Var_ISO_subnational.jpg", gg.iso.var, width = 20, height = 10
 
 
 
-# Stepwise variable selection ---------------------------------------------
 
-pse.obs$row.id = 1:nrow(pse.obs)
-spatial.ind = unique(pse.obs$ID)
-cov.out = cov.names
-cov.in = c("1")
-cov.out = cov.names
-cov.out = c(cov.out, "City * ref_pop_log")
-stop = FALSE
-dic.final.vec = rep(NA, length(cov.names))
-best.cov = list()
-k = 1
+# Horseshoe Penalized Regression ------------------------------------------
 
-## Need to do it using INLA instead of brms for computational necessity
-uniq.iso = unique(pse.obs$ISO)
-while(stop == FALSE){
-  dic.vec = rep(NA, length(cov.out))
-  for(i in 1:length(cov.out)){
-    include = c(cov.in, cov.out[i])
-    
-    brms.form = as.formula(paste0("logit_prev ~ ",
-                                  paste(include, collapse = " + "),
-                                  "+ f(method_std, model = \"iid\") + f(ISO, model = \"iid\")"))
-    
-    n = sum(!is.na(pse.dat.fit$pse))
-    loco.rmse = rep(NA, length(uniq.iso))
-    j = 1
-    for(ind in uniq.iso){ ## LOCO
-      pse.train = pse.obs
-      pse.train$logit_prev[pse.train$ISO == ind] = NA
-      pse.test = subset(pse.obs, ISO == ind)
-      
-      brms.fit = inla(brms.form,
-                      data = pse.train,
-                      family = "gaussian",
-                      control.predictor = list(compute = TRUE, link = 1))
-      
-      lodo.pred.vec = brms.fit$summary.fitted.values$mean[which(is.na(pse.train$logit_prev))]
-      
-      loco.rmse[j] = sqrt(mean((pse.test$logit_prev - lodo.pred.vec)^2, na.rm = T))
-      j = j + 1
-    }
-    
-    dic.vec[i] = mean(loco.rmse) ## Average RMSE over countries
-    print(paste0("i/n:",i,"/",length(cov.out)))
-  }
-  
-  
-  
-  if(min(dic.vec) > min(dic.final.vec, na.rm = T)){
-    stop = TRUE
-  }else{
-    cov.in = c(cov.in,cov.out[which.min(dic.vec)])
-    print(paste("Adding:", cov.out[which.min(dic.vec)]))
-    cov.out = cov.out[-which.min(dic.vec)]
-    best.cov[[j]] = cov.in
-  }
-  dic.final.vec[j] = min(dic.vec)
-  j = j + 1
+model.form = as.formula(paste0("logit_prev ~ ",
+                               paste(cov.names, collapse = " + "),
+                               "+ (1 | method_std) + (1 | ISO)"))
+
+horseshoe.fit = brm(model.form, data = pse.obs, cores = 3, chains = 3,
+                    iter = 6000, warmup = 4000,
+                    control = list(adapt_delta = 0.95),
+                    prior = prior(horseshoe(par_ratio = 0.1), class = "b"),
+                    family = student())
+
+
+est.eff = fixef(horseshoe.fit)[-1,]
+rownames(est.eff) = c("Worldpop Total Pop", "Worldpop fcba Pop", "Worldpop fcba Ratio", "Rainfed Cropland", "Mosaic Cropland", "Percent Urban",
+                   "Wind Speed", "Vapor Pressure", "Solar Radiation", "Precipitation", "Elevation", "Annual Mean Temperature", "Mean Diurnal Range",
+                   "Isothermality", "Temp Seasonality", "Max Temp of Warm Month", "Min Temp of Cold Month", "Temp Annual Range",
+                   "Mean Temp Wet Quarter", "Mean Temp Dry Quarter", "Mean Temp Warm Quarter", "Mean Temp Cold Quarter",
+                   "Annual Prec", "Prec of Wet Month", "Prec of Dry Month", "Prec Seasonality", "Prec Wet Quarter", "Prec Dry Quarter",
+                   "Prec Warm Quarter", "Prec Cold Quarter",
+                   "Wind Speed PW", "Vapor Pressure PW", "Solar Radiation PW", "Elevation PW",
+                   "Annual Mean Temperature PW", "Mean Diurnal Range PW",
+                   "Isothermality PW", "Temp Seasonality PW", "Max Temp of Warm Month PW", "Temp Annual Range PW",
+                   "Mean Temp Wet Quarter PW", "Mean Temp Dry Quarter PW", "Mean Temp Warm Quarter PW", "Mean Temp Cold Quarter PW",
+                   "Annual Prec PW", "Prec of Wet Month PW", "Prec Seasonality PW", "Prec Wet Quarter PW",
+                   "Prec Warm Quarter PW", "Growing Season Length", "Growing Season Length PW",
+                   "Travel to 50K", "Walking Time to Healthcare", "Walking time to Healthcare PW", "Duffy Negative Freq", "Duffy Negative Freq PW",
+                   "HBS Freq", "HBS Freq PW", "G6PD Freq", "G6PD Freq PW", "Nighttime Light Mean", "Nighttime Light 5 Quant", "Nighttime Light Median",
+                   "Nighttime Light 95 Quant", "Population Density", "GDP", "Reference Population (log)", "City", "Reference Population (log) * City")
+est.eff.df = data.frame(est.eff)
+est.eff.df$Predictor = rownames(est.eff)
+est.eff.df$Predictor = factor(est.eff.df$Predictor, levels = c(est.eff.df$Predictor)[order(abs(est.eff.df$Estimate))])
+
+gg.eff = ggplot(est.eff.df, mapping = aes(y = Predictor)) + 
+  geom_point(aes(x = Estimate), size = 3) +
+  geom_errorbarh(aes(xmin = Q2.5, xmax = Q97.5), size = 1.2) +
+  theme_gray(base_size = 15) +
+  ylab("Predictor") + xlab("Estimated Coefficient") +
+  theme(legend.title=element_blank(),
+        axis.text.x = element_text(size = 22, face = "bold"),
+        axis.text.y = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 22, face = "bold")) +
+  theme(plot.margin = margin(unit(c(5.5, 15.5, 5.5, 5.5), "points")))
+
+## Save Supplementary Figure XXX
+ggsave("../Figures/Coef_plot.jpg", gg.eff, width = 10, height = 15)
+
+###################
+## Get values for Table 1
+fixef.mat = fixef(horseshoe.fit)
+rownames(fixef.mat) = c("Intercept", rownames(est.eff))
+fixef.top.10 = round(fixef.mat[order(abs(fixef.mat[,1]), decreasing = T),][1:10,], digits = 3)
+fixef.top.10 = data.frame(fixef.top.10)
+
+table.1.mat = matrix(NA, nrow = 10, ncol = 2)
+for(i in 1:10){
+  table.1.mat[i,1] = rownames(fixef.top.10)[i]
+  table.1.mat[i,2] = paste0(fixef.top.10$Estimate[i], " (", fixef.top.10$Q2.5[i],
+                            ", ", fixef.top.10$Q97.5[i], ")")
+}
+colnames(table.1.mat) = c("Predictor", "Estimate (95% credible interval)")
+write.csv(table.1.mat, "../Data/Results/Top_10_coef.csv", row.names = F)
+
+###################
+## Get values for Supplementary Table S2
+fixef.mat = data.frame(Predictor = rownames(fixef(horseshoe.fit)), fixef(horseshoe.fit))
+fixef.mat$Predictor = c("Intercept", rownames(est.eff))
+fixef.mat$Estimate = format(round(fixef.mat$Estimate, digits = 3), nsmall = 3)
+fixef.mat$Est.Error = format(round(fixef.mat$Est.Error, digits = 3), nsmall = 3)
+fixef.mat$Q2.5 = format(round(fixef.mat$Q2.5, digits = 3), nsmall = 3)
+fixef.mat$Q97.5 = format(round(fixef.mat$Q97.5, digits = 3), nsmall = 3)
+
+table.S2.mat = matrix(NA, nrow = nrow(fixef.mat), ncol = 2)
+for(i in 1:nrow(fixef.mat)){
+  table.S2.mat[i,1] = fixef.mat$Predictor[i]
+  table.S2.mat[i,2] = paste0(fixef.mat$Estimate[i], " (", fixef.mat$Q2.5[i],
+                            ", ", fixef.mat$Q97.5[i], ")")
 }
 
-############################################################################
-# This can be done using frequentist methods to save time
-uniq.iso = unique(pse.obs$ISO)
-while(stop == FALSE){
-  dic.vec = rep(NA, length(cov.out))
-  for(i in 1:length(cov.out)){
-    include = c(cov.in, cov.out[i])
-    
-    brms.form = as.formula(paste0("logit_prev ~ ",
-                                  paste(include, collapse = " + "),
-                                  "+ (1|method_std) +",
-                                  "(1|ISO)"))
-    
-    n = sum(!is.na(pse.dat.fit$pse))
-    loco.rmse = rep(NA, length(uniq.iso))
-    j = 1
-    for(ind in uniq.iso){ ## LOCO
-      pse.train = subset(pse.obs, ISO != ind)
-      pse.test = subset(pse.obs, ISO == ind)
-      
-      brms.fit = lmer(brms.form,
-                      data = pse.train,
-                      control = lmerControl(
-                        optimizer ='optimx', optCtrl=list(method='nlminb')))
-      
-      lodo.pred.vec = predict(brms.fit, newdata = pse.test,
-                              allow.new.levels = TRUE)
-      
-      loco.rmse[j] = sqrt(mean((pse.test$logit_prev - lodo.pred.vec)^2, na.rm = T))
-      j = j + 1
-    }
-    
-    dic.vec[i] = mean(loco.rmse) ## Average RMSE over countries
-    print(paste0("i/n:",i,"/",length(cov.out)))
-  }
-  
-  if(min(dic.vec) > min(dic.final.vec, na.rm = T)){
-    stop = TRUE
-  }else{
-    cov.in = c(cov.in,cov.out[which.min(dic.vec)])
-    print(paste("Adding:", cov.out[which.min(dic.vec)]))
-    cov.out = cov.out[-which.min(dic.vec)]
-    best.cov[[k]] = cov.in
-  }
-  dic.final.vec[k] = min(dic.vec)
-  k = k + 1
+table.S2.mat = data.frame(table.S2.mat)
+table.S2.mat$Explanation = NA
+
+names(table.S2.mat) = c("Predictor", "Estimate (95% credible interval)", "Predictor Explanation")
+table.S2.mat = table.S2.mat[order(abs(as.numeric(fixef.mat$Estimate)), decreasing = T),]
+
+write.csv(table.S2.mat, "../Data/Results/All_est_coef.csv", row.names = F)
+
+
+####################
+## Get values for Table 2
+method.mat = data.frame(ranef(horseshoe.fit)$method_std)
+method.mat = round(method.mat, digits = 3)
+
+## Find FSW estimate for methods
+method.effect = data.frame(matrix(0, nrow = 8, ncol = length(cov.names) + 1))
+names(method.effect) = c(cov.names, "method_std")
+method.effect$method_std = c("CRC", "Enumeration", "Expert", "Mapping",
+                             "Misc", "Multiple", "Multiplier", "NR")
+cov.effect = fitted(horseshoe.fit, newdata = method.effect, allow_new_levels = F,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = ~ (1 | method_std)) ## Ignore ISO
+
+method.ave.fsw = data.frame(Method = method.effect$method_std,
+           Estimate = round(100 * colMeans(plogis(cov.effect)), digits = 2))
+
+
+
+table.2.mat = matrix(NA, nrow = nrow(method.mat), ncol = 3)
+for(i in 1:nrow(method.mat)){
+  table.2.mat[i,1] = rownames(method.mat)[i]
+  table.2.mat[i,2] = paste0(method.mat$Estimate[i], " (", method.mat$Q2.5[i],
+                            ", ", method.mat$Q97.5[i], ")")
+  table.2.mat[i,3] = method.ave.fsw$Estimate[i]
 }
-
-
-plot(pse.obs$worldpop_fcba_ratio, pse.obs$ref_pop_log)
-tmp.city = subset(pse.obs, City == 1)
-tmp.subnational = subset(pse.obs, City == 0)
-
-par(mfrow = c(1,2))
-plot(tmp.city$worldpop_fcba_ratio, tmp.city$ref_pop_log)
-plot(tmp.subnational$worldpop_fcba_ratio, tmp.subnational$ref_pop_log)
-
-#############################################################################
-# Also do backwards stepwise regression to compare
-cov.in = c(cov.names, "City * ref_pop_log")
-uniq.iso = unique(pse.obs$ISO)
-stop = FALSE
-dic.final.vec.backwards = rep(NA, length(cov.names))
-best.cov.backwards = list()
-k = 1
-while(stop == FALSE){
-  include.list = list()
-  dic.vec = rep(NA, length(cov.in))
-  for(i in 1:length(cov.in)){
-    include.list[[i]] = cov.in[-i]
-    
-    brms.form = as.formula(paste0("logit_prev ~ ",
-                                  paste(include.list[[i]], collapse = " + "),
-                                  "+ f(method_std, model = \"iid\") + f(ISO, model = \"iid\")"))
-    
-    n = sum(!is.na(pse.dat.fit$pse))
-    loco.rmse = rep(NA, length(uniq.iso))
-    j = 1
-    for(ind in uniq.iso){ ## LOCO
-      pse.train = pse.obs
-      pse.train$logit_prev[pse.train$ISO == ind] = NA
-      pse.test = subset(pse.obs, ISO == ind)
-      
-      brms.fit = inla(brms.form,
-                      data = pse.train,
-                      family = "gaussian",
-                      control.predictor = list(compute = TRUE, link = 1))
-      
-      lodo.pred.vec = brms.fit$summary.fitted.values$mean[which(is.na(pse.train$logit_prev))]
-      
-      loco.rmse[j] = sqrt(mean((pse.test$logit_prev - lodo.pred.vec)^2, na.rm = T))
-      j = j + 1
-    }
-    
-    dic.vec[i] = mean(loco.rmse) ## Average RMSE over countries
-    print(paste0("i/n:",i,"/",length(cov.in)))
-  }
-  
-  if(k == 1){
-    print(paste("Removing:", cov.in[which.min(dic.vec)]))
-    cov.in = include.list[[which.min(dic.vec)]]
-    best.cov.backwards[[k]] = cov.in
-  }else if(min(dic.vec) > min(dic.final.vec.backwards, na.rm = T)){
-    stop = TRUE
-  }else{
-    print(paste("Removing:", cov.in[which.min(dic.vec)]))
-    cov.in = include.list[[which.min(dic.vec)]]
-    best.cov.backwards[[k]] = cov.in
-  }
-  dic.final.vec.backwards[k] = min(dic.vec)
-  k = k + 1
-}
-
-
-
-## Or via frequentist
-cov.in = c(cov.names, "City * ref_pop_log")
-uniq.iso = unique(pse.obs$ISO)
-stop = FALSE
-dic.final.vec.backwards = rep(NA, length(cov.names))
-best.cov.backwards = list()
-k = 1
-while(stop == FALSE){
-  include.list = list()
-  dic.vec = rep(NA, length(cov.in))
-  for(i in 1:length(cov.in)){
-    include.list[[i]] = cov.in[-i]
-    
-    brms.form = as.formula(paste0("logit_prev ~ ",
-                                  paste(include.list[[i]], collapse = " + "),
-                                  "+ (1|method_std) +",
-                                  "(1|ISO)"))
-    
-    n = sum(!is.na(pse.dat.fit$pse))
-    loco.rmse = rep(NA, length(uniq.iso))
-    j = 1
-    for(ind in uniq.iso){ ## LOCO
-      pse.train = subset(pse.obs, ISO != ind)
-      pse.test = subset(pse.obs, ISO == ind)
-      
-      brms.fit = lmer(brms.form,
-                      data = pse.train,
-                      control = lmerControl(
-                        optimizer ='optimx', optCtrl=list(method='nlminb')))
-      
-      lodo.pred.vec = predict(brms.fit, newdata = pse.test,
-                              allow.new.levels = TRUE)
-      
-      loco.rmse[j] = sqrt(mean((pse.test$logit_prev - lodo.pred.vec)^2, na.rm = T))
-      j = j + 1
-    }
-    
-    dic.vec[i] = mean(loco.rmse) ## Average RMSE over countries
-    print(paste0("i/n:",i,"/",length(cov.in)))
-  }
-  
-  if(k == 1){
-    print(paste("Removing:", cov.in[which.min(dic.vec)]))
-    cov.in = include.list[[which.min(dic.vec)]]
-    best.cov.backwards[[k]] = cov.in
-  }else if(min(dic.vec) > min(dic.final.vec.backwards, na.rm = T)){
-    stop = TRUE
-  }else{
-    print(paste("Removing:", cov.in[which.min(dic.vec)]))
-    cov.in = include.list[[which.min(dic.vec)]]
-    best.cov.backwards[[k]] = cov.in
-  }
-  dic.final.vec.backwards[k] = min(dic.vec)
-  k = k + 1
-}
+colnames(table.2.mat) = c("Method", "Estimate (95% credible interval)", "FSW percent estimate at methods")
+write.csv(table.2.mat, "../Data/Results/Method_effect.csv", row.names = F)
 
 
 
 
 # LODO sequence -----------------------------------------------------------
-## Purpose:
-# (1) Evaluate LOO Performance
-# (2) Check for spatial random effect performance
-# MCMC is far too slow for LOO, use INLA
+## Normal vs t errors
+n = nrow(pse.obs)
+ID.vec = unique(pse.obs$ID)
+n.ID = length(ID.vec)
+ISO.vec = unique(pse.obs$ISO)
+n.ISO = length(ISO.vec)
 
-## Model formulas
-base.form = as.formula(paste0("logit_prev ~ City * ref_pop_log + urban + cropland_rainfed",
-                              " + wc2.1_2.5m_elev_popweighted + walking_healthcare_popweighted +",
-                              "f(method_std, model = \"iid\") + f(ISO, model = \"iid\")"))
+normal.mean.error = t.mean.error = c()
 
-spatial.form = as.formula(paste0("logit_prev ~ City * ref_pop_log + urban + cropland_rainfed",
-                                 " + wc2.1_2.5m_elev_popweighted + walking_healthcare_popweighted +",
-                                 "f(method_std, model = \"iid\") + f(ISO, model = \"iid\")",
-                                 "+ f(ID, model = \"besag\", graph = nb.mat)"))
-
-
-n = sum(!is.na(pse.dat.fit$pse))
-base.pred = spatial.pred = district.pred = spatial.district.pred = rep(NA, n)
-pse.dat.lodo = subset(pse.dat.fit, !is.na(pse))
-spatial.ind = unique(pse.dat.lodo$ID)
-j = 1
-for(i in spatial.ind){
-  pse.dat.lodo = subset(pse.dat.fit, !is.na(pse))
-  pse.dat.lodo$ID.1 = pse.dat.lodo$ID
-  pse.dat.lodo$logit_prev[which(pse.dat.lodo$ID == i)] = NA
-  pse.dat.in = subset(pse.dat.lodo, !is.na(logit_prev))
-  pse.dat.miss = subset(pse.dat.lodo, is.na(logit_prev))
+for(i in 1:n.ID){
+  district.ind = which(pse.obs$ID == ID.vec[i])
+  pse.sub = pse.obs[district.ind,]
   
-  brms.base = inla(base.form,
-                   data = pse.dat.lodo,
-                   family = "gaussian",
-                   control.predictor = list(compute = TRUE, link = 1))
-  brms.spatial = inla(spatial.form,
-                      data = pse.dat.lodo,
-                      family = "gaussian",
-                      control.predictor = list(compute = TRUE, link = 1))
+  normal.pred = readRDS(file = paste0("../Data/Results/LOO_Results/Normal_pred_values_ID_",ID.vec[i],"_ind_",i,".rds"))
+  t.pred = readRDS(file = paste0("../Data/Results/LOO_Results/t_pred_values_ID_",ID.vec[i],"_ind_",i,".rds"))
   
+  normal.mean.error = c(normal.mean.error, colMeans(normal.pred) - pse.sub$logit_prev)
+  t.mean.error = c(t.mean.error, colMeans(t.pred) - pse.sub$logit_prev)
   
-  base.pred[which(pse.dat.lodo$ID == i)] = brms.base$summary.fitted.values$mean[which(is.na(pse.dat.lodo$logit_prev))]
-  spatial.pred[which(pse.dat.lodo$ID == i)] = brms.spatial$summary.fitted.values$mean[which(is.na(pse.dat.lodo$logit_prev))]
-  
-  
-  print(round(j/length(spatial.ind)*100))
-  j = j + 1
+  print(i)
 }
 
-pse.dat.lodo = subset(pse.dat.fit, !is.na(pse))
+mean(normal.mean.error^2)
+mean(t.mean.error^2)
 
-lodo.df.base = data.frame(pred.link = base.pred,
-                          truth.link = pse.dat.lodo$logit_prev,
-                          ISO = pse.dat.lodo$ISO,
-                          size = pse.dat.lodo$ref_pop)
+hist(normal.mean.error)
+hist(t.mean.error)
 
-lodo.df.spatial = data.frame(pred.link = spatial.pred,
-                             truth.link = pse.dat.lodo$logit_prev,
-                             ISO = pse.dat.lodo$ISO,
-                             size = pse.dat.lodo$ref_pop)
-
-lodo.df.base$resid = lodo.df.base$truth.link - lodo.df.base$pred.link
-lodo.df.spatial$resid = lodo.df.spatial$truth.link - lodo.df.spatial$pred.link
-
-mean(lodo.df.base$resid^2, na.rm = T)
-mean(lodo.df.spatial$resid^2, na.rm = T)
-
-gg1 = ggplot(lodo.df.base) + geom_point(aes(x = pred.link, y = resid)) +
-  geom_abline(slope = 0, intercept = 0, col = "black", lwd = 1.5) +
-  xlab("Fitted Value (logit scale)") + ylab("Residual (Logit Scale)") +
-  theme_grey(base_size = 15) + 
-  theme(legend.position = "none") +
-  ylim(-7.2, 3.4) + xlim(-7, -1)
-
-gg2 = ggplot(lodo.df.spatial) + geom_point(aes(x = pred.link, y = resid)) +
-  geom_abline(slope = 0, intercept = 0, col = "black", lwd = 1.5) +
-  xlab("Fitted Value (logit scale)") + ylab("Residual (Logit Scale)") +
-  theme_grey(base_size = 15) +
-  ylim(-7.2, 3.4) + xlim(-7, -1)
+plot(normal.mean.error, t.mean.error)
+abline(0, 1, col = "red")
 
 
-# LOCO --------------------------------------------------------------------
-## Do Leave one country out
+## Spatial vs no Spatial
+spatial.mean.error = nospatial.mean.error = c()
 
-n = sum(!is.na(pse.dat.fit$pse))
-base.pred = spatial.pred = district.pred = spatial.district.pred = rep(NA, n)
-pse.dat.loco = subset(pse.dat.fit, !is.na(pse))
-spatial.ind = unique(pse.dat.loco$ID)
-n.dist = length(unique(pse.dat.loco$ISO))
-ISO.vec = unique(pse.dat.loco$ISO)
-j = 1
-for(i in 1:n.dist){
-  pse.dat.loco = subset(pse.dat.fit, !is.na(pse))
-  country.ind = which(pse.dat.loco$ISO == ISO.vec[i])
-  pse.dat.loco$logit_prev[country.ind] = NA
-  pse.dat.in = subset(pse.dat.loco, !is.na(logit_prev))
-  pse.dat.miss = subset(pse.dat.loco, is.na(logit_prev))
+for(i in 1:n.ID){
+  district.ind = which(pse.obs$ID == ID.vec[i])
+  pse.sub = pse.obs[district.ind,]
   
-  brms.base = inla(base.form,
-                   data = pse.dat.loco,
-                   family = "gaussian",
-                   control.predictor = list(compute = TRUE, link = 1))
-  brms.spatial = inla(spatial.form,
-                      data = pse.dat.loco,
-                      family = "gaussian",
-                      control.predictor = list(compute = TRUE, link = 1))
+  normal.pred = readRDS(file = paste0("../Data/Results/LOO_Results/Spatial_pred_values_ID_",ID.vec[i],"_ind_",i,".rds"))
+  spatial.pred = readRDS(file = paste0("../Data/Results/LOO_Results/Nospatial_pred_values_ID_",ID.vec[i],"_ind_",i,".rds"))
   
+  spatial.mean.error = c(spatial.mean.error, colMeans(normal.pred) - pse.sub$logit_prev)
+  nospatial.mean.error = c(nospatial.mean.error, colMeans(spatial.pred) - pse.sub$logit_prev)
   
-  base.pred[country.ind] = brms.base$summary.fitted.values$mean[which(is.na(pse.dat.loco$logit_prev))]
-  spatial.pred[country.ind] = brms.spatial$summary.fitted.values$mean[which(is.na(pse.dat.loco$logit_prev))]
-  
-  print(round(i/n.dist*100))
+  # print(i)
 }
 
-pse.dat.loco = subset(pse.dat.fit, !is.na(pse))
+mean(spatial.mean.error^2)
+mean(nospatial.mean.error^2)
 
-loco.df.base = data.frame(pred.link = base.pred,
-                          truth.link = pse.dat.loco$logit_prev,
-                          ISO = pse.dat.loco$ISO,
-                          size = pse.dat.loco$ref_pop)
+hist(spatial.mean.error)
+hist(nospatial.mean.error)
 
-loco.df.spatial = data.frame(pred.link = spatial.pred,
-                             truth.link = pse.dat.loco$logit_prev,
-                             ISO = pse.dat.loco$ISO,
-                             size = pse.dat.loco$ref_pop)
-
-
-loco.df.base$resid = loco.df.base$truth.link - loco.df.base$pred.link
-loco.df.spatial$resid = loco.df.spatial$truth.link - loco.df.spatial$pred.link
-
-mean(loco.df.base$resid^2, na.rm = T)
-mean(loco.df.spatial$resid^2, na.rm = T)
-
-gg1 = ggplot(loco.df.base) + geom_point(aes(x = pred.link, y = resid, col = ISO)) +
-  geom_abline(slope = 0, intercept = 0, col = "black", lwd = 1.5) +
-  xlab("Fitted Value (logit scale)") + ylab("Residual (Logit Scale)") +
-  theme_grey(base_size = 15) + 
-  theme(legend.position = "none") +
-  ylim(-8.2, 3.2) + xlim(-6, -1.9)
-
-gg2 = ggplot(loco.df.spatial) + geom_point(aes(x = pred.link, y = resid, col = ISO)) +
-  geom_abline(slope = 0, intercept = 0, col = "black", lwd = 1.5) +
-  xlab("Reference Population") + ylab("Residual (Logit Scale)") +
-  theme_grey(base_size = 15) +
-  ylim(-8.2, 3.2) + xlim(-6, -1.9)
+plot(spatial.mean.error, nospatial.mean.error)
+abline(0, 1, col = "red")
 
 
 
-# Fit final model ---------------------------------------------------------
-## Now we can use MCMC again
-base.form = as.formula(paste0("logit_prev ~ City * ref_pop_log + urban + cropland_rainfed",
-                              " + wc2.1_2.5m_elev_popweighted + walking_healthcare_popweighted +",
-                              "(1|method_std) + (1|ISO)"))
 
 
-which.not.na = which(!is.na(pse.dat.fit$pse))
-which.na = which(is.na(pse.dat.fit$pse))
-pse.dat.fit$City[-which.not.na] = 0
-pse.dat.fit$ID[-which.not.na] = NA
+# LOCO sequence -----------------------------------------------------------
+## Normal vs t errors
 
-pse.dat.obs = subset(pse.dat.fit, !is.na(prev))
-pse.dat.miss = subset(pse.dat.fit, is.na(prev))
+normal.mean.error = t.mean.error = c()
 
-brms.base = brm(base.form, data = pse.dat.obs, cores = 3, chains = 3,
-                iter = 6000, warmup = 4000,
-                control = list(adapt_delta = 0.95))
-brms.fitted = fitted(brms.base)
+for(i in 1:n.ISO){
+  country.ind = which(pse.obs$ISO == ISO.vec[i])
+  pse.sub = pse.obs[country.ind,]
+  
+  normal.pred = readRDS(file = paste0("../Data/Results/LOO_Results/Normal_pred_values_ISO_",ISO.vec[i],"_ind_",i,".rds"))
+  t.pred = readRDS(file = paste0("../Data/Results/LOO_Results/t_pred_values_ISO_",ISO.vec[i],"_ind_",i,".rds"))
+  
+  normal.mean.error = c(normal.mean.error, colMeans(normal.pred) - pse.sub$logit_prev)
+  t.mean.error = c(t.mean.error, colMeans(t.pred) - pse.sub$logit_prev)
+  
+  # print(i)
+}
+
+mean(normal.mean.error^2)
+mean(t.mean.error^2)
+
+hist(normal.mean.error)
+hist(t.mean.error)
+
+plot(normal.mean.error, t.mean.error)
+abline(0, 1, col = "red")
 
 
-resid = pse.dat.obs$logit_prev - brms.fitted[,1]
-plot(resid ~ brms.fitted[,1])
-abline(h = 0, lwd = 2)
-qqnorm(resid)
-qqline(resid)
 
-resid.df = data.frame(resid = resid, fitted = brms.fitted[,1])
 
-min.val = min(resid.df)-0.2
-max.val = max(resid.df)+0.2
-## Look at diagnostics
-gg.qq = ggplot(resid.df, aes(sample = resid)) + stat_qq(size = 2.5) +
-  geom_qq_line(size = 1.5) +
-  xlab("Theoretical Quantiles") + ylab("Sample Quantiles") +
-  theme_grey(base_size = 15) + ggtitle("Normal distribution") +
+## Spatial vs no Spatial
+spatial.mean.error = nospatial.mean.error = c()
+
+for(i in 1:n.ISO){
+  country.ind = which(pse.obs$ISO == ISO.vec[i])
+  pse.sub = pse.obs[country.ind,]
+  
+  normal.pred = readRDS(file = paste0("../Data/Results/LOO_Results/Spatial_pred_values_ISO_",ISO.vec[i],"_ind_",i,".rds"))
+  spatial.pred = readRDS(file = paste0("../Data/Results/LOO_Results/Nospatial_pred_values_ISO_",ISO.vec[i],"_ind_",i,".rds"))
+  
+  spatial.mean.error = c(spatial.mean.error, colMeans(normal.pred) - pse.sub$logit_prev)
+  nospatial.mean.error = c(nospatial.mean.error, colMeans(spatial.pred) - pse.sub$logit_prev)
+  
+  # print(i)
+}
+
+mean(spatial.mean.error^2)
+mean(nospatial.mean.error^2)
+
+hist(spatial.mean.error)
+hist(nospatial.mean.error)
+
+plot(spatial.mean.error, nospatial.mean.error)
+abline(0, 1, col = "red")
+
+
+
+
+
+
+# Compare fit of t and normal ---------------------------------------------
+
+
+normal.fit = brm(model.form, data = pse.obs, cores = 3, chains = 3,
+                    iter = 6000, warmup = 4000,
+                    control = list(adapt_delta = 0.95),
+                    prior = prior(horseshoe(par_ratio = 0.1), class = "b"))
+
+gg.hs.dens = pp_check(horseshoe.fit, type = "dens_overlay") +
+  theme_grey(base_size = 15) + ggtitle("Student's T") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+gg.hs.ecdf = pp_check(horseshoe.fit, type = "ecdf_overlay") +
+  theme_grey(base_size = 15) + ggtitle("Student's T") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+gg.hs.stat = pp_check(horseshoe.fit, type = "stat_2d") +
+  theme_grey(base_size = 15) + ggtitle("Student's T") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+gg.hs.loo = pp_check(horseshoe.fit, type = "loo_pit") +
+  theme_grey(base_size = 15) + ggtitle("Student's T") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+### Normal plots
+gg.normal.dens = pp_check(normal.fit, type = "dens_overlay") +
+  theme_grey(base_size = 15) + ggtitle("Gaussian") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+gg.normal.ecdf = pp_check(normal.fit, type = "ecdf_overlay") +
+  theme_grey(base_size = 15) + ggtitle("Gaussian") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+gg.normal.stat = pp_check(normal.fit, type = "stat_2d") +
+  theme_grey(base_size = 15) + ggtitle("Gaussian") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+gg.normal.loo = pp_check(normal.fit, type = "loo_pit") +
+  theme_grey(base_size = 15) + ggtitle("Gaussian") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+
+
+ggsave("../Figures/hs_dens.jpg", gg.hs.dens, width = 10, height = 10)
+ggsave("../Figures/hs_ecdf.jpg", gg.hs.ecdf, width = 10, height = 10)
+ggsave("../Figures/hs_stat.jpg", gg.hs.stat, width = 10, height = 10)
+ggsave("../Figures/hs_loo.jpg", gg.hs.loo, width = 10, height = 10)
+
+ggsave("../Figures/normal_dens.jpg", gg.normal.dens, width = 10, height = 10)
+ggsave("../Figures/normal_ecdf.jpg", gg.normal.ecdf, width = 10, height = 10)
+ggsave("../Figures/normal_stat.jpg", gg.normal.stat, width = 10, height = 10)
+ggsave("../Figures/normal_loo.jpg", gg.normal.loo, width = 10, height = 10)
+## qq plots are saved below
+
+
+
+
+
+
+
+## Get width of intervals
+
+normal.fitted = fitted(normal.fit, summary = F)
+t.fitted = fitted(horseshoe.fit, summary = F)
+
+normal.interval = t(apply(normal.fitted, 2, quantile, probs = c(0.025, 0.975)))
+t.interval = t(apply(t.fitted, 2, quantile, probs = c(0.025, 0.975)))
+
+normal.width.std = abs((normal.interval[,2] - normal.interval[,1])) / abs(colMeans(normal.fitted))
+t.width.std = abs((t.interval[,2] - t.interval[,1])) / abs(colMeans(t.fitted))
+
+plot(normal.width.std, t.width.std)
+abline(0, 1, col = "red")
+
+min.val = min(normal.width.std, t.width.std)
+max.val = max(normal.width.std, t.width.std)
+
+width.df = data.frame("normal" = normal.width.std,
+                      "t" = t.width.std)
+
+gg.normal.t.width = ggplot(width.df) + 
+  geom_point(aes(x = normal, y = t)) +
+  geom_abline(intercept = 0, slope = 1, col = "red") +
+  xlab("Relative Uncertainty of Gaussian Model") + ylab("Relative Uncertainty of Student's T Model") +
+  theme_grey(base_size = 15) + ggtitle("") +
   theme(axis.text.x = element_text(size = 20, face = "bold"),
         axis.text.y = element_text(size = 20, face = "bold"),
         axis.title.x = element_text(size = 22, face = "bold"),
@@ -695,7 +645,134 @@ gg.qq = ggplot(resid.df, aes(sample = resid)) + stat_qq(size = 2.5) +
     xlim = c(min.val, max.val),
     ylim = c(min.val, max.val)
   )
-ggsave("../Figures/QQ_plot.jpg", gg.qq, width = 10, height = 10)
+ggsave("../Figures/normal_t_width.jpg", gg.normal.t.width, width = 10, height = 10)
+
+# Study Final Model ---------------------------------------------------------
+
+## First compare prediction intervals to lower and upper bounds of observed estimates
+pse.obs.lu = pse.obs
+pse.obs.lu$lower.uncertainty.measure = as.numeric(pse.obs.lu$lower.uncertainty.measure)
+pse.obs.lu$upper.uncertainty.measure = as.numeric(pse.obs.lu$upper.uncertainty.measure)
+pse.obs.lu = subset(pse.obs.lu, !is.na(pse.obs.lu$lower.uncertainty.measure) | !is.na(pse.obs.lu$upper.uncertainty.measure))
+pse.obs.lu$lower.prev = pse.obs.lu$lower.uncertainty.measure / pse.obs.lu$ref_pop
+pse.obs.lu$upper.prev = pse.obs.lu$upper.uncertainty.measure / pse.obs.lu$ref_pop
+
+# predicted.vals.sub = predict(horseshoe.fit, pse.obs.lu, summary = F)
+predicted.vals.sub = fitted(horseshoe.fit, pse.obs.lu, summary = F)
+predicted.vals.sub = plogis(predicted.vals.sub)
+
+predicted.width = t(apply(predicted.vals.sub, 2, quantile, probs = c(0.025, 0.975)))
+
+predicted.df = data.frame(pred.lower = predicted.width[,1],
+                          pred.upper = predicted.width[,2],
+                          pred.std = abs(predicted.width[,2] - predicted.width[,1]) / abs(colMeans(predicted.vals.sub)),
+                          obs.lower = pse.obs.lu$lower.prev,
+                          obs.upper = pse.obs.lu$upper.prev,
+                          obs.std = abs(pse.obs.lu$upper.prev - pse.obs.lu$lower.prev) / abs(pse.obs.lu$prev))
+
+ggplot(predicted.df) +
+  geom_errorbar(aes(x = 1:nrow(pse.obs.lu), ymin = obs.lower, ymax = obs.upper)) +
+  geom_errorbar(aes(x = 1:nrow(pse.obs.lu) + 0.2, ymin = pred.lower, ymax = pred.upper), col = "red")
+
+
+predicted.melt = reshape2::melt(predicted.df, measure.vars = c("pred.std", "obs.std"))
+predicted.melt$id = rep(1:nrow(predicted.df), 2)
+
+gg.pred.width = ggplot(predicted.melt) +
+  geom_point(aes(x = id, y = value, col = variable), size = 2) +
+  scale_color_discrete(name = "Interval", labels = c("Model Prediction", "Literature")) +
+  xlab("Observation Number") +
+  ylab("Standardized Prediction Width") +
+  theme_grey(base_size = 15) + ggtitle("") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+ggsave("../Figures/Pred_vs_obs_width.jpg", gg.pred.width, width = 10, height = 10)
+
+gg.pred.width.trunc = ggplot(predicted.melt) +
+  geom_point(aes(x = id, y = value, col = variable), size = 2) +
+  scale_color_discrete(name = "Interval", labels = c("Model Prediction", "Literature")) +
+  xlab("Observation Number") +
+  ylab("Standardized Prediction Width") +
+  theme_grey(base_size = 15) + ggtitle("") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1) +
+  ylim(0, 2.2)
+ggsave("../Figures/Pred_vs_obs_width_trunc.jpg", gg.pred.width.trunc, width = 10, height = 10)
+
+mean(predicted.df$pred.std < predicted.df$obs.std)
+
+
+
+
+ggplot(predicted.df) +
+  geom_point(aes(x = pred.std, y = obs.std), size = 2) +
+  xlab("Predicted Standardized Interval Width") +
+  ylab("Literature Standardized Interval Width") +
+  theme_grey(base_size = 15) + ggtitle("Normal distribution") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold")) +
+  geom_abline(slope = 1, intercept = 0, col = "red", size = 1.5) +
+  xlim(0, 50)
+
+
+## Now analyze the mean
+fitted.vals = fitted(horseshoe.fit)
+resid.vals = resid(horseshoe.fit)
+resid.df = data.frame(resid = resid.vals[,1], fitted = fitted.vals[,1])
+
+fitted.normal.vals = fitted(normal.fit)
+resid.normal.vals = resid(normal.fit)
+resid.normal.df = data.frame(resid = resid.normal.vals[,1], fitted = fitted.normal.vals[,1])
+
+## Look at diagnostics
+gg.qq = ggplot(resid.df, aes(sample = resid)) +
+  stat_qq(distribution = qt, dparams = summary(horseshoe.fit)$spec_pars[2,1], size = 2.5) +
+  geom_qq_line(distribution = qt, dparams = summary(horseshoe.fit)$spec_pars[2,1], size = 1.5, fullrange = T) +
+  xlab("Theoretical Quantiles") + ylab("Sample Quantiles") +
+  theme_grey(base_size = 15) + ggtitle("Student's T") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+ggsave("../Figures/QQ_hs_plot.jpg", gg.qq, width = 10, height = 10)
+
+gg.qq.normal = ggplot(resid.normal.df, aes(sample = resid)) +
+  stat_qq(size = 2.5) +
+  geom_qq_line(size = 1.5, fullrange = T) +
+  xlab("Theoretical Quantiles") + ylab("Sample Quantiles") +
+  theme_grey(base_size = 15) + ggtitle("Gaussian distribution") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1)
+ggsave("../Figures/QQ_normal_plot.jpg", gg.qq.normal, width = 10, height = 10)
+
+
 
 gg.resid = ggplot(resid.df) + geom_point(aes(x = fitted, y = resid)) +
   xlab("Fitted Values") + ylab("Residuals") +
@@ -711,24 +788,175 @@ gg.resid = ggplot(resid.df) + geom_point(aes(x = fitted, y = resid)) +
         aspect.ratio = 1)
 ggsave("../Figures/Resid_plot.jpg", gg.resid, width = 10, height = 10)
 
-post.fitted = fitted(brms.base, newdata = pse.dat.miss, allow_new_levels = TRUE,
+
+## Extract fitted values for presentation
+post.fitted = fitted(horseshoe.fit, newdata = pse.pred, allow_new_levels = TRUE,
                      sample_new_levels = "gaussian", summary = FALSE,
                      re_formula = ~ (1|ISO)) ## Ignore method
 post.transformed = plogis(post.fitted)
 post.mean = colMeans(post.transformed)
 quant.interval = apply(post.transformed, 2, quantile, probs = c(0.025, 0.975))
 
+
+## Add results to gadm.cov
 gadm.cov = readRDS("../Data/Shapefile_Prep.rds")
 gadm.cov$Prev = gadm.cov$Fitted_FSW = gadm.cov$Lower = gadm.cov$Upper =
   gadm.cov$Uncertainty = NA
 
-
-## Add results to gadm.cov
 gadm.cov$Prev = post.mean 
-gadm.cov$Fitted_FSW = post.mean * pse.dat.fit$ref_pop[which.na]
+gadm.cov$Fitted_FSW = post.mean * pse.pred$ref_pop
 gadm.cov$Lower = quant.interval[1,]
 gadm.cov$Upper = quant.interval[2,]
 gadm.cov$Uncertainty = (gadm.cov$Upper - gadm.cov$Lower) / gadm.cov$Prev
+
+
+## Find FSW estimate for top 9 covariates, except for city and city interaction
+## Create plots for this effect
+cov.effect.df = data.frame(matrix(NA, nrow = 0, ncol = length(cov.names) + 3))
+names(cov.effect) = c(cov.names, "value", "variable", "Estimate")
+
+## Get base level without covariates
+cov.tmp = data.frame(matrix(0, nrow = 1, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cbind(cov.tmp, colMeans(plogis(cov.effect))) * 100
+
+## Reference Population (log)
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$ref_pop_log = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "Log Reference Population"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+## Population Density (log)
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$PD = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "Log Population Density"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+## G6PD Frequency
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$g6pdd_frequency = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "G6PD Frequency"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+## Percent Urban (log)
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$urban = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "Log Percent Urban"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+## Precipitation Cold Quarter
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$wc2.1_2.5m_bio_19 = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "Prec Cold Quarter"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+## Solar Radiation
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$wc2.1_2.5m_srad_01 = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "Solar Radiation"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+## Walking time to nearest healthcare PW (log)
+cov.tmp = data.frame(matrix(0, nrow = 1000, ncol = length(cov.names) + 2))
+names(cov.tmp) = c(cov.names, "value", "variable")
+cov.tmp$walking_healthcare_popweighted = seq(-2, 2, length.out = 1000)
+cov.tmp$value = seq(-2, 2, length.out = 1000)
+cov.tmp$variable = "Log Walking time to Healthcare PW"
+cov.effect = fitted(horseshoe.fit, newdata = cov.tmp, allow_new_levels = TRUE,
+                    sample_new_levels = "gaussian", summary = FALSE,
+                    re_formula = NA) ## Ignore method and ISO
+cov.effect.df = rbind(cov.effect.df, cbind(cov.tmp, colMeans(plogis(cov.effect))))
+
+
+
+
+## Plot Estimates
+names(cov.effect.df)[ncol(cov.effect.df)] = c("Estimate")
+cov.effect.df$Estimate = cov.effect.df$Estimate * 100
+
+
+cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00")
+gg.cov.eff = ggplot(cov.effect.df) +
+  geom_line(aes(x = value, y = Estimate, group = variable, col = variable), size = 2) +
+  xlab("Standardized Variable") + ylab("FSW Percent Estimate") +
+  theme(axis.text.x = element_text(size = 20, face = "bold"),
+        axis.text.y = element_text(size = 20, face = "bold"),
+        axis.title.x = element_text(size = 22, face = "bold"),
+        axis.title.y = element_text(size = 22, face = "bold"),
+        legend.title = element_text(size = 22, face = "bold"),
+        legend.text = element_text(size = 18),
+        title = element_text(size = 22, face = "bold"),
+        aspect.ratio = 1) +
+  scale_y_continuous(breaks = round(seq(min(cov.effect.df$Estimate), max(cov.effect.df$Estimate), by = 0.1),1)) +
+  scale_color_manual(name = "Covariate", values = cbPalette)
+gg.cov.eff
+
+ggsave("../Figures/Covariate_effect_lines.jpg", plot = gg.cov.eff, height = 10, width = 15)
+
+
+
+
+
+# Get sub-Saharan Africa FSW size estimates --------------------------------
+
+post.fsw = post.transformed
+for(i in 1:nrow(post.fsw)){
+  post.fsw[i,] = post.fsw[i,] * gadm.cov$ref_pop
+}
+
+est.fsw.vec = rowSums(post.fsw)
+
+## Estimated number of FSW in SSA
+mean(est.fsw.vec)
+
+## Lower and upper 95% credible interval of FSW in SSA
+quantile(est.fsw.vec, probs = c(0.025, 0.975))
+
+
+## And calculate in terms of percent of women of childbearing age
+mean(est.fsw.vec) / sum(gadm.cov$ref_pop) * 100
+quantile(est.fsw.vec, probs = c(0.025, 0.975))  / sum(gadm.cov$ref_pop) * 100
+
+
+
+
+
+# Get country level data --------------------------------------------------
+
+## Aggregate to country level
 gadm.country = raster::aggregate(gadm.cov, by = c("ISO", "NAME_0"),
                                  sums = list(list(function(x){sum(x, na.rm = T)}, "ref_pop")))
 
@@ -751,139 +979,25 @@ for(i in 1:nrow(gadm.country)){
 gadm.country$Prev = gadm.country$Fitted_FSW / gadm.country$ref_pop
 gadm.country$Uncertainty = (gadm.country$Upper - gadm.country$Lower) / gadm.country$Prev
 gadm.country$Percent = gadm.country$Prev * 100
+
 gadm.country@data
 
 gadm.country@data[order(gadm.country$Percent),]
 
 
+## Look at Nigeria
+gadm.nga = subset(gadm.cov, ISO == "NGA")
 
-## Find FSW estimate for methods
-pse.dat.cov.effect = data.frame(City = 0,
-                                ref_pop_log = 0,
-                                urban = 0,
-                                cropland_rainfed = 0,
-                                wc2.1_2.5m_elev_popweighted = 0,
-                                walking_healthcare_popweighted = 0,
-                                method_std = c("CRC", "Enumeration", "Expert", "Mapping",
-                                               "Misc", "Multiple", "Multiplier", "NR"))
-cov.effect = fitted(brms.base, newdata = pse.dat.cov.effect, allow_new_levels = F,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = ~ (1 | method_std)) ## Ignore method and ISO
-
-cbind(pse.dat.cov.effect, round(100 * colMeans(plogis(cov.effect)), digits = 2))
-
-cov.effect = fitted(brms.base, newdata = pse.dat.cov.effect, allow_new_levels = F,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method and ISO
-
-cbind(pse.dat.cov.effect, round(100 * colMeans(plogis(cov.effect)), digits = 2))
-
-## Find FSW estimate different for covariates
-## Create plots for this effect
-cov.effect.df = matrix(NA, nrow = 0, ncol = 9)
-pse.dat.cov = data.frame(City = 0,
-                         ref_pop_log = seq(-2, 2, length.out = 1000),
-                         urban = 0,
-                         cropland_rainfed = 0,
-                         wc2.1_2.5m_elev_popweighted = 0,
-                         walking_healthcare_popweighted = 0,
-                         value = seq(-2, 2, length.out = 1000),
-                         variable = "Log Reference Population")
-cov.effect = fitted(brms.base, newdata = pse.dat.cov, allow_new_levels = TRUE,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method and ISO
-cov.effect.df = rbind(cov.effect.df, cbind(pse.dat.cov, colMeans(plogis(cov.effect))))
+head(gadm.nga@data[order(gadm.nga$Prev), c("NAME_1", "Prev")])
+tail(gadm.nga@data[order(gadm.nga$Prev), c("NAME_1", "Prev")])
 
 
-pse.dat.cov = data.frame(City = 0,
-                         ref_pop_log = 0,
-                         urban = seq(-2, 2, length.out = 1000),
-                         cropland_rainfed = 0,
-                         wc2.1_2.5m_elev_popweighted = 0,
-                         walking_healthcare_popweighted = 0,
-                         value = seq(-2, 2, length.out = 1000),
-                         variable = "Urban")
-cov.effect = fitted(brms.base, newdata = pse.dat.cov, allow_new_levels = TRUE,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method and ISO
-cov.effect.df = rbind(cov.effect.df, cbind(pse.dat.cov, colMeans(plogis(cov.effect))))
-
-pse.dat.cov = data.frame(City = 0,
-                         ref_pop_log = 0,
-                         urban = 0,
-                         cropland_rainfed = seq(-2, 2, length.out = 1000),
-                         wc2.1_2.5m_elev_popweighted = 0,
-                         walking_healthcare_popweighted = 0,
-                         value = seq(-2, 2, length.out = 1000),
-                         variable = "Rainfed Cropland")
-cov.effect = fitted(brms.base, newdata = pse.dat.cov, allow_new_levels = TRUE,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method and ISO
-cov.effect.df = rbind(cov.effect.df, cbind(pse.dat.cov, colMeans(plogis(cov.effect))))
-
-pse.dat.cov = data.frame(City = 0,
-                         ref_pop_log = 0,
-                         urban = 0,
-                         cropland_rainfed = 0,
-                         wc2.1_2.5m_elev_popweighted = seq(-2, 2, length.out = 1000),
-                         walking_healthcare_popweighted = 0,
-                         value = seq(-2, 2, length.out = 1000),
-                         variable = "Elevation")
-cov.effect = fitted(brms.base, newdata = pse.dat.cov, allow_new_levels = TRUE,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method and ISO
-cov.effect.df = rbind(cov.effect.df, cbind(pse.dat.cov, colMeans(plogis(cov.effect))))
-
-pse.dat.cov = data.frame(City = 0,
-                         ref_pop_log = 0,
-                         urban = 0,
-                         cropland_rainfed = 0,
-                         wc2.1_2.5m_elev_popweighted = 0,
-                         walking_healthcare_popweighted = seq(-2, 2, length.out = 1000),
-                         value = seq(-2, 2, length.out = 1000),
-                         variable = "Walking to Healthcare")
-cov.effect = fitted(brms.base, newdata = pse.dat.cov, allow_new_levels = TRUE,
-                    sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method and ISO
-cov.effect.df = rbind(cov.effect.df, cbind(pse.dat.cov, colMeans(plogis(cov.effect))))
-
-cov.effect.df = data.frame(cov.effect.df)
-names(cov.effect.df) = c(names(pse.dat.cov), "Estimate")
-cov.effect.df$Estimate = cov.effect.df$Estimate * 100
-
-
-cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
-gg.cov.eff = ggplot(cov.effect.df) +
-  geom_line(aes(x = value, y = Estimate, group = variable, col = variable), size = 2) +
-  xlab("Standardized Variable") + ylab("FSW Percent Estimate") +
-  theme(axis.text.x = element_text(size = 20, face = "bold"),
-        axis.text.y = element_text(size = 20, face = "bold"),
-        axis.title.x = element_text(size = 22, face = "bold"),
-        axis.title.y = element_text(size = 22, face = "bold"),
-        legend.title = element_text(size = 22, face = "bold"),
-        legend.text = element_text(size = 18),
-        title = element_text(size = 22, face = "bold"),
-        aspect.ratio = 1) +
-  scale_y_continuous(breaks = round(seq(min(cov.effect.df$Estimate), max(cov.effect.df$Estimate), by = 0.1),1)) +
-  scale_color_manual(name = "Covariate", values = cbPalette)
-gg.cov.eff
-
-ggsave("../Figures/Covariate_effect_lines.jpg", plot = gg.cov.eff, height = 10, width = 15)
-
-
-
-
-
-
-
-
-
-
+## Look at data availability for Malawi
+pse.obs.mwi = subset(pse.obs, ISO == "MWI")
+table(pse.obs.mwi$City, pse.obs.mwi$ID)
 
 
 # Save Results ------------------------------------------------------------
-
-
 save.image("../Data/Results/Final_Results.RData")
 
 ## Remove some columns from gadm.cov
@@ -891,7 +1005,7 @@ gadm.cov@data = gadm.cov@data[,c("ID", "ISO", "NAME_0", "NAME_1", "ref_pop",
                                  "Uncertainty", "Upper", "Lower", "Fitted_FSW", "Prev")]
 saveRDS(gadm.cov, "../Data/Results/Final_district_est.rds")
 saveRDS(gadm.country, "../Data/Results/Final_country_est.rds")
-saveRDS(brms.base, "../Data/Results/Final_model_fit.rds")
+saveRDS(horseshoe.fit, "../Data/Results/Final_model_fit.rds")
 write.csv(gadm.cov@data, "../Data/Results/Final_district_est.csv")
 write.csv(gadm.country@data, "../Data/Results/Final_country_est.csv")
 
@@ -908,92 +1022,18 @@ write.csv(gadm.country@data, "../Data/Results/Final_country_est.csv")
 ###########################################################################
 ###########################################################################
 
+## Create Supplementary Table S3
+## Rank country level random effects
 
-## Calculate Variance Inflation Factor using Frequentist Model (VIF)
-library(car)
-freq.fit = lmer(base.form, data = pse.dat.obs)
-vif(freq.fit)
-
-
-
-library(GGally)
-# Plot covariates against each other
-scaleFUN <- function(x) sprintf("%.0f", x)
-gg.cov.pairs = ggpairs(pse.dat.miss[,c("ref_pop_log", "urban", "cropland_rainfed",
-                                       "wc2.1_2.5m_elev_popweighted", "walking_healthcare_popweighted")],
-                       columnLabels = c("Log Ref Pop", "% Urban", "% Rain Crop",
-                                        "Elevation", "Healthcare"),
-                       upper = list(continuous = wrap("cor", size=12))) +
-  theme(axis.text.x = element_text(size = 18, face = "bold"),
-        axis.text.y = element_text(size = 18, face = "bold"),
-        axis.title.x = element_text(size = 22, face = "bold"),
-        axis.title.y = element_text(size = 22, face = "bold"),
-        strip.text.x = element_text(size = 23),
-        strip.text.y = element_text(size = 23)) +
-  scale_y_continuous(labels=scaleFUN) +
-  scale_x_continuous(labels=scaleFUN)
+country.ranef = data.frame(ranef(horseshoe.fit)$ISO)
+country.ranef[order(country.ranef[,1,1]),]
 
 
-ggsave("../Figures/Covariate_pairwise.jpg", plot = gg.cov.pairs, height = 12, width = 12)
-
-
-
-# Get some plots of Method ------------------------------------------------
-tmp = pse.dat.obs
-tmp$method_std = factor(tmp$method_std)
-tmp$method_std = factor(substr(as.character(tmp$method_std), 1, 50))
-tmp$method_std = as.character(tmp$method_std)
-method.table = table(tmp$method_std)
-n.NA = sum(is.na(tmp$method_std))
-method.n = as.numeric(table(tmp$method_std))
-for(i in 1:nrow(tmp)){
-  tmp.ind = which(names(method.table) == as.character(tmp$method_std[i]))
-  if(length(tmp.ind) > 0){
-    tmp$method_std[i] = paste0(as.character(tmp$method_std[i]), " (N = ", method.table[tmp.ind], ")")
-  }else{ ## The NA's
-    tmp$method_std[i] = paste0(as.character(tmp$method_std[i]), " (N = ", n.NA, ")")
-  }
-}
-tmp$method_std = factor(tmp$method_std, levels = c("CRC (N = 53)", "Enumeration (N = 82)",
-                                                   "Expert (N = 20)", "Mapping (N = 374)",
-                                                   "Misc (N = 32)", "Multiple (N = 112)",
-                                                   "Multiplier (N = 49)",
-                                                   "NR (N = 210)"))
-gg1 = ggplot(tmp, aes(x = logit_prev, y = factor(method_std))) + geom_boxplot() +
-  ylab("Method") + xlab("Logit-transformed FSW proportion") +
-  scale_y_discrete(labels = c("CRC (N = 53)", "Enumeration (N = 82)",
-                              "Expert (N = 20)", "Mapping (N = 374)",
-                              "Misc (N = 32)", "Multiple (N = 112)",
-                              "Multiplier (N = 49)",
-                              "NR (N = 210)")) +
-  theme_grey(base_size = 15) +
-  theme(axis.text.x = element_text(size = 20, face = "bold"),
-        axis.text.y = element_text(size = 20, face = "bold"),
-        axis.title.x = element_text(size = 25, face = "bold"),
-        axis.title.y = element_text(size = 25, face = "bold"),
-        legend.title = element_text(size = 22, face = "bold"),
-        legend.text = element_text(size = 18),
-        title = element_text(size = 22, face = "bold"))
-gg1
-ggsave("../Figures/Method_boxplots.jpg", plot = gg1, height = 10, width = 20)
-
-
-
-
-
-
-# Rank country level random effects ---------------------------------------
-
-country.ranef = ranef(brms.base)$ISO
-country.ranef[order(country.ranef[,1,1]),,1]
-hist(country.ranef[,1,1], breaks = 10)
-
-
-# Rank estimated fixed effects --------------------------------------------
+## Rank estimated fixed effects
 ## Here we look at country FSW proportion from the predictors only
-post.fixed = fitted(brms.base, newdata = pse.dat.miss, allow_new_levels = TRUE,
+post.fixed = fitted(horseshoe.fit, newdata = pse.pred, allow_new_levels = TRUE,
                     sample_new_levels = "gaussian", summary = FALSE,
-                    re_formula = NA) ## Ignore method
+                    re_formula = NA) ## Ignore method and ISO
 post.fixed.transformed = plogis(post.fixed)
 post.fixed.mean = colMeans(post.fixed.transformed)
 
@@ -1021,79 +1061,25 @@ gadm.country.fixed$Percent = gadm.country.fixed$Prev * 100
 gadm.country.fixed@data[order(gadm.country.fixed@data$Percent),]
 
 cbind(gadm.country@data, gadm.country.fixed$Percent,
-      rank(gadm.country$Percent), rank(gadm.country.fixed$Percent))
+      rank(gadm.country$Percent), rank(gadm.country.fixed$Percent))[order(gadm.country$Percent),]
 
 cbind(country.ranef[,1,1],rank(country.ranef[,1,1]))
 
 gadm.country$Predictor_only = gadm.country.fixed$Percent
 gadm.country$Predictor_only_rank = rank(gadm.country.fixed$Percent)
-write.csv(gadm.country@data, "../Data/Results/Final_country_est.csv")
 
+country.mat = data.frame(Country = gadm.country$NAME_0)
+country.mat$`FSW proportion (percent)` = format(round(gadm.country$Percent, digits = 3), nsmall = 3)
+country.mat$`FSW proportion from predictors only (percent)` = format(round(gadm.country$Predictor_only, digits = 3), nsmall = 3)
+country.mat$`Predictor effect ordering` = gadm.country$Predictor_only_rank
+country.mat$`Country effect` = NA
+country.mat$`Country effect ordering` = NA
 
+country.mat$`Country effect`[match(rownames(country.ranef), gadm.country$ISO)] = format(round(country.ranef$Estimate.Intercept, digits = 3), nsmall = 3)
+country.mat$`Country effect ordering`[match(rownames(country.ranef), gadm.country$ISO)] = rank(country.ranef$Estimate.Intercept)
 
-# Variance decomposition --------------------------------------------------
-
-library(lmerTest) ## Have to load lmerTest for ANOVA Tables for Linear Mixed Models
-freq.fit = lmer(logit_prev ~ City * ref_pop_log + urban +
-                  cropland_rainfed + walking_healthcare_popweighted +
-                  wc2.1_2.5m_elev_popweighted +
-                  (1|method_std) + (1|ISO), data = pse.dat.obs)
-summary(freq.fit)
-anova(freq.fit)
-ranova(freq.fit)
-
-library(MuMIn)
-r.squaredGLMM(freq.fit)
-
-
-## Decompose R^2 for each random effect
-fitted <- (model.matrix(freq.fit) %*% 
-             fixef(freq.fit))[, 1L]
-varFE <- var(fitted)
-
-## Fixed effect
-varFE / (varFE +
-           sum(unlist(summary(freq.fit)$varcor)) +
-           summary(freq.fit)$sigma^2)
-
-## Random effects only
-sum(unlist(summary(freq.fit)$varcor)) / (varFE +
-                                           sum(unlist(summary(freq.fit)$varcor)) +
-                                           summary(freq.fit)$sigma^2)
-
-## ISO
-unlist(summary(freq.fit)$varcor)[1] / (varFE +
-                                         sum(unlist(summary(freq.fit)$varcor)) +
-                                         summary(freq.fit)$sigma^2)
-
-## Method
-unlist(summary(freq.fit)$varcor)[2] / (varFE +
-                                         sum(unlist(summary(freq.fit)$varcor)) +
-                                         summary(freq.fit)$sigma^2)
-
-# Look at variance of repeated measures -----------------------------------
-
-repeated.id = as.numeric(names(table(pse.dat.obs$ID)[which(table(pse.dat.obs$ID) >= 3)]))
-
-repeated.var = repeated.n = rep(NA, length(repeated.id))
-for(ind in 1:length(repeated.id)){
-  tmp = subset(pse.dat.obs, ID == repeated.id[ind])
-  repeated.n[ind] = nrow(tmp)
-  repeated.var[ind] = var(tmp$logit_prev)
-}
-summary(repeated.var)
-sum((repeated.n - 1) * repeated.var) / (sum(repeated.n - 1))
-sum((repeated.n - 1) * repeated.var) / (sum(repeated.n - 1)) /
-  summary(freq.fit)$sigma^2
-
-
-repeated.dat = subset(pse.dat.obs, ID %in% repeated.id)
-repeated.fit = lmer(logit_prev ~ City * ref_pop_log + urban + mosaic_cropland + walking_healthcare_popweighted +
-                      (1|method_std) + (1|ID),
-                    data = repeated.dat)
-r.squaredGLMM(repeated.fit)
-
-
+country.mat = country.mat[order(country.mat$`FSW proportion (percent)`),]
+write.csv(country.mat, "../Data/Results/Final_country_est.csv", row.names = F)
 
 
 # LOCO for regression coefficients ----------------------------------------
@@ -1101,15 +1087,15 @@ r.squaredGLMM(repeated.fit)
 
 
 ## Get intervals df for coef, method, and ISO
-fixef.full = fixef(brms.base)
+fixef.full = fixef(horseshoe.fit)
 coef.full.df = data.frame(
-  variable = rownames(fixef.full),
+  variable = c("Intercept", rownames(est.eff)),
   est = fixef.full[, "Estimate"],
   lower = fixef.full[, "Q2.5"],
   upper = fixef.full[, "Q97.5"]
 )
 
-method.full = ranef(brms.base)$method_std
+method.full = ranef(horseshoe.fit)$method_std
 method.full.df = data.frame(
   variable = rownames(method.full),
   est = method.full[, "Estimate", 1],
@@ -1118,7 +1104,7 @@ method.full.df = data.frame(
 )
 
 
-iso.full = ranef(brms.base)$ISO
+iso.full = ranef(horseshoe.fit)$ISO
 iso.full.df = data.frame(
   variable = rownames(iso.full),
   est = iso.full[, "Estimate", 1],
@@ -1127,45 +1113,31 @@ iso.full.df = data.frame(
 )
 
 ## Now do LOO
-n = sum(!is.na(pse.dat.fit$pse))
-pse.dat.loco = subset(pse.dat.fit, !is.na(pse))
-n.iso = length(unique(pse.dat.loco$ISO))
-ISO.vec = unique(pse.dat.loco$ISO)
-j = 1
-fixef.loco = matrix(NA, nrow = n.iso, ncol = 8)
-method.loco = matrix(NA, nrow = n.iso, ncol = 8)
-iso.loco = matrix(NA, nrow = n.iso, ncol = n.iso)
-for(i in 31:n.iso){
-  pse.dat.loco = subset(pse.dat.fit, !is.na(pse))
-  country.ind = which(pse.dat.loco$ISO == ISO.vec[i])
-  pse.dat.loco$logit_prev[country.ind] = NA
-  pse.dat.in = subset(pse.dat.loco, !is.na(logit_prev))
-  pse.dat.miss = subset(pse.dat.loco, is.na(logit_prev))
-  
-  brms.fit = brm(base.form, data = pse.dat.in, cores = 3, chains = 3,
-                 iter = 6000, warmup = 4000,
-                 control = list(adapt_delta = 0.95))
+## LOCO performed in Coefficient_sensitivity_LOCO.R to allow for parallel computing on a cluster
+## Results read in here
+n.country = length(unique(pse.obs$ISO))
+ISO.vec = unique(pse.obs$ISO)
 
-  fixef.loco[i,] = fixef(brms.fit)[,"Estimate"]
-  method.loco[i,] = ranef(brms.fit)$method_std[,"Estimate", 1]
-  iso.loco[i,-i] = ranef(brms.fit)$ISO[,"Estimate", 1]
+fixef.loco = matrix(NA, nrow = n.country, ncol = 70)
+method.loco = matrix(NA, nrow = n.country, ncol = 8)
+iso.loco = matrix(NA, nrow = n.country, ncol = n.country)
+
+for(i in 1:n.country){
+  fixef.tmp = readRDS(file = paste0("../Data/Results/LOO_Results/Coef/Fixef_sens_iso_",ISO.vec[i],"_ind_",i,".rds"))
+  method.tmp = readRDS(file = paste0("../Data/Results/LOO_Results/Coef/Method_sens_iso_",ISO.vec[i],"_ind_",i,".rds"))
+  iso.tmp = readRDS(file = paste0("../Data/Results/LOO_Results/Coef/ISO_sens_iso_",ISO.vec[i],"_ind_",i,".rds"))
   
-  ## Can comment above and uncomment below for frequentist fit
-  # freq.fit = lmer(base.form,
-  #                 data = pse.dat.in,
-  #                 control = lmerControl(
-  #                   optimizer ='optimx', optCtrl=list(method='nlminb')))
-  # 
-  # fixef.loco[i,] = fixef(freq.fit)
-  # method.loco[i,] = unlist(ranef(freq.fit)$method_std)
-  # iso.loco[i,-i] = unlist(ranef(freq.fit)$ISO)
-  
-  print(round(i/n.iso*100))
+  fixef.loco[i,] = fixef.tmp
+  method.loco[i,] = method.tmp
+  iso.loco[i,match(names(iso.tmp), ISO.vec)] = iso.tmp
 }
 
-colnames(fixef.loco) = rownames(fixef(brms.fit))
-colnames(method.loco) = rownames(ranef(brms.fit)$method_std)
+
+
+colnames(fixef.loco) = c("Intercept", rownames(est.eff))
+colnames(method.loco) = rownames(ranef(horseshoe.fit)$method_std)
 colnames(iso.loco) = ISO.vec
+
 
 fixef.loco.melt = reshape2::melt(fixef.loco)
 method.loco.melt = reshape2::melt(method.loco)
@@ -1194,62 +1166,68 @@ for(i in 1:nrow(iso.loco.melt)){
 }
 fixef.loco.melt$Var2 = as.character(fixef.loco.melt$Var2)
 
-fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "ref_pop_log"] = "Log Ref Pop"
-fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "urban"] = "% Urban"
-fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "cropland_rainfed"] = "% Rain Crop"
-fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "wc2.1_2.5m_elev_popweighted"] = "Elevation"
-fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "walking_healthcare_popweighted"] = "Healthcare"
-fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "City:ref_pop_log"] = "City:Log Ref Pop"
+# fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "ref_pop_log"] = "Log Ref Pop"
+# fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "urban"] = "% Urban"
+# fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "cropland_rainfed"] = "% Rain Crop"
+# fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "wc2.1_2.5m_elev_popweighted"] = "Elevation"
+# fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "walking_healthcare_popweighted"] = "Healthcare"
+# fixef.loco.melt$Var2[fixef.loco.melt$Var2 == "City:ref_pop_log"] = "City:Log Ref Pop"
+# 
+# fixef.loco.melt$Var2 = factor(fixef.loco.melt$Var2, levels = c("Intercept", "City", "Log Ref Pop",
+#                                                                "City:Log Ref Pop", "% Urban", "% Rain Crop",
+#                                                                "Elevation", "Healthcare"))
 
-fixef.loco.melt$Var2 = factor(fixef.loco.melt$Var2, levels = c("Intercept", "City", "Log Ref Pop",
-                                                               "City:Log Ref Pop", "% Urban", "% Rain Crop",
-                                                               "Elevation", "Healthcare"))
 
+
+
+
+fixef.loco.melt = subset(fixef.loco.melt, Var2 != "Intercept")
+
+fixef.loco.melt$Var2 = factor(fixef.loco.melt$Var2, levels = levels(est.eff.df$Predictor))
 gg.fixef = ggplot(fixef.loco.melt) +
   geom_errorbar(
     mapping = aes(
-      x = Var2,
-      ymin = lower,
-      ymax = upper,
+      y = Var2,
+      xmin = lower,
+      xmax = upper,
       group = Var2
     ),
     width = 0.2,
     size = 1,
     col = "blue",
   ) +
-  geom_boxplot(aes(y = value, x = Var2, group = Var2), varwidth = TRUE, outlier.size = 4, outlier.shape = 18) +
-  geom_point(aes(x = Var2, y = est), col = "blue", size = 5) +
-  facet_wrap(~Var2, scales = "free") +
+  geom_boxplot(aes(x = value, y = Var2, group = Var2), varwidth = TRUE, outlier.size = 4, outlier.shape = 18) +
+  geom_point(aes(x = est, y = Var2), col = "blue", size = 2) +
   theme_grey(base_size = 15) +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.text.y = element_text(size = 20, face = "bold"),
+  theme(axis.text.y = element_text(hjust = 1, size = 20, face = "bold"),
+        axis.text.x = element_text(size = 20, face = "bold"),
         axis.title.x = element_text(size = 22, face = "bold"),
         axis.title.y = element_text(size = 22, face = "bold"),
         legend.title = element_text(size = 22, face = "bold"),
         legend.text = element_text(size = 18),
         strip.text = element_text(size = 23),
         title = element_text(size = 22, face = "bold")) +
-  ylab("Estimate") + xlab("")
+  xlab("Estimate") + ylab("Predictor") +
+  theme(plot.margin = margin(unit(c(5.5, 15.5, 5.5, 5.5), "points")))
 gg.fixef
 
 gg.method.eff = ggplot(method.loco.melt) +
   geom_errorbar(
     mapping = aes(
-      x = Var2,
-      ymin = lower,
-      ymax = upper,
+      y = Var2,
+      xmin = lower,
+      xmax = upper,
       group = Var2
     ),
     width = 0.2,
     size = 1,
     col = "blue",
   ) +
-  geom_boxplot(aes(y = value, x = Var2, group = Var2), varwidth = TRUE, outlier.size = 4, outlier.shape = 18) +
-  geom_point(aes(x = Var2, y = est), col = "blue", size = 5) +
+  geom_boxplot(aes(x = value, y = Var2, group = Var2), varwidth = TRUE, outlier.size = 4, outlier.shape = 18) +
+  geom_point(aes(x = est, y = Var2), col = "blue", size = 5) +
   theme_grey(base_size = 15) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 20, face = "bold"),
-        axis.text.y = element_text(size = 20, face = "bold"),
+  theme(axis.text.y = element_text(hjust = 1, size = 20, face = "bold"),
+        axis.text.x = element_text(size = 20, face = "bold"),
         axis.title.x = element_text(size = 22, face = "bold"),
         axis.title.y = element_text(size = 22, face = "bold"),
         legend.title = element_text(size = 22, face = "bold"),
@@ -1262,20 +1240,20 @@ gg.method.eff
 gg.iso.eff = ggplot(iso.loco.melt) + 
   geom_errorbar(
     mapping = aes(
-      x = Var2,
-      ymin = lower,
-      ymax = upper,
+      y = Var2,
+      xmin = lower,
+      xmax = upper,
       group = Var2
     ),
     width = 0.4,
     size = 1,
     col = "blue",
   ) +
-  geom_boxplot(aes(y = value, x = Var2, group = Var2), varwidth = TRUE, outlier.size = 3, outlier.shape = 18) +
-  geom_point(aes(x = Var2, y = est), col = "blue", size = 3) +
+  geom_boxplot(aes(x = value, y = Var2, group = Var2), varwidth = TRUE, outlier.size = 3, outlier.shape = 18) +
+  geom_point(aes(x = est, y = Var2), col = "blue", size = 3) +
   theme_grey(base_size = 15) +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 20, face = "bold"),
-        axis.text.y = element_text(size = 20, face = "bold"),
+  theme(axis.text.y = element_text(hjust = 1, size = 20, face = "bold"),
+        axis.text.x = element_text(size = 20, face = "bold"),
         axis.title.x = element_text(size = 22, face = "bold"),
         axis.title.y = element_text(size = 22, face = "bold"),
         legend.title = element_text(size = 22, face = "bold"),
@@ -1286,78 +1264,8 @@ gg.iso.eff = ggplot(iso.loco.melt) +
 gg.iso.eff
 
 
-ggsave("../Figures/LOCO_fixef.jpg", gg.fixef, width = 10, height = 10)
-ggsave("../Figures/LOCO_method.jpg", gg.method.eff, width = 10, height = 10)
-ggsave("../Figures/LOCO_ISO.jpg", gg.iso.eff, width = 15, height = 10)
+ggsave("../Figures/LOCO_fixef.jpg", gg.fixef, width = 10, height = 15, dpi = 600)
+ggsave("../Figures/LOCO_method.jpg", gg.method.eff, width = 10, height = 10, dpi = 600)
+ggsave("../Figures/LOCO_ISO.jpg", gg.iso.eff, width = 10, height = 15, dpi = 600)
 
 
-
-
-
-# Compare predictive performance of full model to restricted --------------
-
-full.form = as.formula(paste0("logit_prev ~ City * ref_pop_log + urban + cropland_rainfed",
-                              " + wc2.1_2.5m_elev_popweighted + walking_healthcare_popweighted +",
-                              "(1|method_std) + (1|ISO)"))
-
-reduced.form = as.formula(paste0("logit_prev ~ City * ref_pop_log + urban +",
-                                 "(1|method_std) + (1|ISO)"))
-
-n = sum(!is.na(pse.dat.fit$pse))
-full.rmse = reduced.rmse = rep(NA, length(uniq.iso))
-j = 1
-for(ind in uniq.iso){ ## LOCO
-  pse.train = subset(pse.obs, ISO != ind)
-  pse.test = subset(pse.obs, ISO == ind)
-  
-  
-  full.fit = brm(base.form, data = pse.train, cores = 3, chains = 3,
-                 iter = 6000, warmup = 4000,
-                 control = list(adapt_delta = 0.95))
-
-  reduced.fit = brm(reduced.form, data = pse.train, cores = 3, chains = 3,
-                 iter = 6000, warmup = 4000,
-                 control = list(adapt_delta = 0.95))
-  
-  full.pred.vec = fitted(full.fit, newdata = pse.test, allow_new_levels = TRUE,
-                         sample_new_levels = "gaussian", summary = TRUE)[,"Estimate"]
-  
-  reduced.pred.vec = fitted(reduced.fit, newdata = pse.test, allow_new_levels = TRUE,
-                         sample_new_levels = "gaussian", summary = TRUE)[,"Estimate"]
-  
-  full.rmse[j] = sqrt(mean((pse.test$logit_prev - full.pred.vec)^2))
-  reduced.rmse[j] = sqrt(mean((pse.test$logit_prev - reduced.pred.vec)^2))
-  
-  
-  ## Can comment above an uncomment below for frequentist fit
-  # full.fit = lmer(base.form,
-  #                 data = pse.train,
-  #                 control = lmerControl(
-  #                   optimizer ='optimx', optCtrl=list(method='nlminb')))
-  # 
-  # reduced.fit = lmer(reduced.form,
-  #                    data = pse.train,
-  #                    control = lmerControl(
-  #                      optimizer ='optimx', optCtrl=list(method='nlminb')))
-  # 
-  # full.pred.vec = predict(full.fit, newdata = pse.test,
-  #                         allow.new.levels = TRUE)
-  # 
-  # reduced.pred.vec = predict(reduced.fit, newdata = pse.test,
-  #                            allow.new.levels = TRUE)
-  # 
-  # full.rmse[j] = sqrt(mean((pse.test$logit_prev - full.pred.vec)^2))
-  # reduced.rmse[j] = sqrt(mean((pse.test$logit_prev - reduced.pred.vec)^2))
-
-  
-  j = j + 1
-  
-  print(j)
-}
-
-boxplot(data.frame(full = full.rmse, reduced = reduced.rmse))
-mean(full.rmse)
-mean(reduced.rmse)
-
-## This is the value reported in the supplementary information
-(mean(full.rmse) - mean(reduced.rmse)) / mean(full.rmse) * 100

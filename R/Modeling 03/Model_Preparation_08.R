@@ -8,7 +8,7 @@ library(spdep) ## For neighborhood structure
 
 rm(list=ls())
 # Read in data ------------------------------------------------------------
-pse.dat = read.csv("../Data/PSE Spreadsheets/SSA_FSW_PSE_03.csv")
+pse.dat = read.csv("../Data/FSW Spreadsheets/SSA_FSW_PSE_03.csv")
 gadm.dhs = readRDS("../Data/Shapefiles/gadm36_adm1_africa_dhs.rds")
 gadm.spatial = readRDS("../Data/gadm36_adm1_with_spatial.rds")
 gadm.spatial$NAME_1 = gadm.dhs$NAME_1
@@ -21,6 +21,7 @@ nightlight.cov = readRDS("../Data/Shapefiles/gadm36_adm1_nightlight.rds")
 
 # Stage 0 (Separate areas) ------------------------------------------------
 table(pse.dat$Validated_area, useNA = "always")
+pse.national = subset(pse.dat, Validated_area %in% c("National"))
 pse.dat = subset(pse.dat, Validated_area %in%
                    c("Adm1", "City", "Multi-city"))
 pse.dat$City = 1
