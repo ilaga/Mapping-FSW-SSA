@@ -51,7 +51,9 @@ pse.dat.fit = readRDS("../Data/Final_pse_dat_fit.rds")
 pse.dat.sub = subset(pse.dat.fit, !is.na(pse))
 
 gadm.district$Percent = round(gadm.district$Prev * 100, digits = 2)
+gadm.district$Uncertainty = round(gadm.district$Uncertainty, digits = 2)
 gadm.country$Percent = round(gadm.country$Percent, digits = 2)
+gadm.country$Uncertainty = round(gadm.country$Uncertainty, digits = 2)
 
 
 pse.prev.iso.dat = pse.dat.sub
@@ -59,7 +61,7 @@ pse.prev.iso.dat$ISO = factor(pse.prev.iso.dat$ISO, levels = levels(pse.dat.fit$
 
 cbPalette <- c("#E69F00", "#56B4E9")
 gg.prev.iso = ggplot(pse.dat.sub) +
-  geom_point(aes(y = logit_prev, x = ISO, col = as.factor(City)), shape = 1, size = 2.5,
+  geom_jitter(aes(y = logit_prev, x = ISO, col = as.factor(City)), shape = 1, size = 2.5,
              stroke = 1.5) +
   theme_gray(base_size = 15) +
   xlab("Country ISO") + ylab("FSW Proportion (Logit)") +
@@ -73,6 +75,44 @@ gg.prev.iso = ggplot(pse.dat.sub) +
         legend.text = element_text(size = 22, face = "bold"))
 ggsave("../Figures/Prev_ISO.jpg", gg.prev.iso, width = 20, height = 10)
 
+
+gg.prev.raw.iso = ggplot(pse.dat.sub) +
+  geom_jitter(aes(y = 100*prev, x = ISO, col = as.factor(City)), shape = 1, size = 2.5,
+             stroke = 1.5) +
+  theme_gray(base_size = 15) +
+  xlab("Country ISO") + ylab("FSW Percent") +
+  scale_x_discrete(drop = FALSE) + 
+  scale_color_manual(values = cbPalette,
+                     name = "\n", labels = c("Sub-national", "City")) +
+  theme(legend.title=element_blank(),
+        axis.text = element_text(size = 22, face = "bold"),
+        axis.title = element_text(size = 22, face = "bold"),
+        axis.text.x = element_text(angle = 90, vjust = 0.5),
+        legend.text = element_text(size = 22, face = "bold"))
+ggsave("../Figures/Prev_raw_ISO.jpg", gg.prev.raw.iso, width = 20, height = 10)
+
+
+
+gadm.country.df = gadm.country@data
+national.df = subset(pse.dat, Validated_area == "National")
+
+gg.country.est = ggplot() + 
+  geom_point(aes(x = ISO, y = Percent), data = gadm.country.df, size = 5) +
+  geom_errorbar(aes(x = ISO, ymin = Lower * 100, ymax = Upper * 100), data = gadm.country.df, size = 2) +
+  geom_point(aes(x = ISO, y = 100 * Prev_comb), shape = 2, col = "red", data = national.df, size = 2, stroke = 2) +
+  scale_shape_manual(values = c(1, 2),
+                     name = "\n", labels = c("Model estimate", "National estimate\n from literature"),
+                     guide = guide_legend(overrise.aes = list(shape = c(1, 2)))) +
+  guides(shape = guide_legend(overrise.aes = list(shape = c(1, 2)))) +
+  xlab("Country ISO") +
+  ylab("Percent FSW") +
+  theme_gray(base_size = 15) +
+  theme(axis.text = element_text(size = 22, face = "bold"),
+        axis.title = element_text(size = 22, face = "bold"),
+        axis.text.x = element_text(angle = 90, vjust = 0.5),
+        legend.text = element_text(size = 22, face = "bold"))
+gg.country.est
+ggsave("../Figures/Country_comp.jpg", gg.country.est, width = 20, height = 10)
 
 
 pse.dat.sub$City = factor(pse.dat.sub$City, levels = c(0,1), labels = c("Sub-national", "City"))
@@ -109,23 +149,6 @@ gg.refpop.pse
 
 gridExtra::grid.arrange(gg.prev.pse, gg.refpop.pse, gg.prev.refpop, nrow = 2)
 
-
-
-
-gg.prev.urban = ggplot(pse.dat.sub) + geom_point(aes(x = urban, y = logit_prev)) +
-  xlab("Urban") + ylab("Logit-transformed FSW proportion") +
-  theme_grey(base_size = 15) + facet_wrap(~City)
-gg.prev.urban
-
-gg.prev.cropland = ggplot(pse.dat.sub) + geom_point(aes(x = mosaic_cropland, y = logit_prev)) +
-  xlab("Mosaic Cropland") + ylab("Logit-transformed FSW proportion") +
-  theme_grey(base_size = 15) + facet_wrap(~City)
-gg.prev.cropland
-
-gg.prev.walking = ggplot(pse.dat.sub) + geom_point(aes(x = walking_healthcare_popweighted, y = logit_prev)) +
-  xlab("Walking healthcare") + ylab("Logit-transformed FSW proportion") +
-  theme_grey(base_size = 15) + facet_wrap(~City)
-gg.prev.walking
 
 
 
@@ -229,7 +252,8 @@ country.prev.map = tm_shape(country.shape.africa) +
   tm_layout(frame = FALSE,
             legend.title.size = 1.5,
             legend.text.size = 1.5,
-            legend.title.fontface = 2, asp = NA)
+            legend.title.fontface = 2, asp = NA,
+            legend.format = list(digits = 2))
 
 country.uncertainty.map = tm_shape(country.shape.africa) +
   tm_polygons("na", colorNA = "grey40", legend.show = FALSE) +
@@ -243,7 +267,8 @@ country.uncertainty.map = tm_shape(country.shape.africa) +
   tm_layout(frame = FALSE,
             legend.title.size = 1.5,
             legend.text.size = 1.5,
-            legend.title.fontface = 2, asp = NA)
+            legend.title.fontface = 2, asp = NA,
+            legend.format = list(digits = 2))
 
 district.prev.map = tm_shape(country.shape.africa) +
   tm_polygons("na", colorNA = "grey40", legend.show = FALSE) +
@@ -256,7 +281,8 @@ district.prev.map = tm_shape(country.shape.africa) +
   tm_layout(frame = FALSE,
             legend.title.size = 1.5,
             legend.text.size = 1.5,
-            legend.title.fontface = 2, asp = NA) +
+            legend.title.fontface = 2, asp = NA,
+            legend.format = list(digits = 2)) +
   tm_shape(gadm.country) +
   tm_borders()
 
@@ -271,7 +297,8 @@ district.prev.even.map = tm_shape(country.shape.africa) +
   tm_layout(frame = FALSE,
             legend.title.size = 1.5,
             legend.text.size = 1.5,
-            legend.title.fontface = 2, asp = NA) +
+            legend.title.fontface = 2, asp = NA,
+            legend.format = list(digits = 2)) +
   tm_shape(gadm.country) +
   tm_borders()
 
@@ -287,7 +314,8 @@ district.uncertainty.map = tm_shape(country.shape.africa) +
   tm_layout(frame = FALSE,
             legend.title.size = 1.5,
             legend.text.size = 1.5,
-            legend.title.fontface = 2) +
+            legend.title.fontface = 2,
+            legend.format = list(digits = 2)) +
   tm_shape(gadm.country) +
   tm_borders()
 
