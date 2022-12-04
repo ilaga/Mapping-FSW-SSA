@@ -46,7 +46,7 @@ for (iso.ind in unique(c(gadm.36.adm1$ISO))) {
   }
   f15.worldPop = raster(f15.name)
   
-  f20.name = paste0("./WorldPop_data/", iso.ind, "_f20.tif")
+  f20.name = paste0("../Data/WorldPop_data/", iso.ind, "_f20.tif")
   if (!file.exists(f20.name)) {
     f20.link = paste0(
       "https://data.worldpop.org/GIS/AgeSex_structures/Global_2000_2020/2015/",
@@ -59,7 +59,7 @@ for (iso.ind in unique(c(gadm.36.adm1$ISO))) {
   }
   f20.worldPop = raster(f20.name)
   
-  f25.name = paste0("./WorldPop_data/", iso.ind, "_f25.tif")
+  f25.name = paste0("../Data/WorldPop_data/", iso.ind, "_f25.tif")
   if (!file.exists(f25.name)) {
     f25.link = paste0(
       "https://data.worldpop.org/GIS/AgeSex_structures/Global_2000_2020/2015/",
@@ -72,7 +72,7 @@ for (iso.ind in unique(c(gadm.36.adm1$ISO))) {
   }
   f25.worldPop = raster(f25.name)
   
-  f30.name = paste0("./WorldPop_data/", iso.ind, "_f30.tif")
+  f30.name = paste0("../Data/WorldPop_data/", iso.ind, "_f30.tif")
   if (!file.exists(f30.name)) {
     f30.link = paste0(
       "https://data.worldpop.org/GIS/AgeSex_structures/Global_2000_2020/2015/",
@@ -85,7 +85,7 @@ for (iso.ind in unique(c(gadm.36.adm1$ISO))) {
   }
   f30.worldPop = raster(f30.name)
   
-  f35.name = paste0("./WorldPop_data/", iso.ind, "_f35.tif")
+  f35.name = paste0("../Data/WorldPop_data/", iso.ind, "_f35.tif")
   if (!file.exists(f35.name)) {
     f35.link = paste0(
       "https://data.worldpop.org/GIS/AgeSex_structures/Global_2000_2020/2015/",
@@ -98,7 +98,7 @@ for (iso.ind in unique(c(gadm.36.adm1$ISO))) {
   }
   f35.worldPop = raster(f35.name)
   
-  f40.name = paste0("./WorldPop_data/", iso.ind, "_f40.tif")
+  f40.name = paste0("../Data/WorldPop_data/", iso.ind, "_f40.tif")
   if (!file.exists(f40.name)) {
     f40.link = paste0(
       "https://data.worldpop.org/GIS/AgeSex_structures/Global_2000_2020/2015/",
@@ -111,7 +111,7 @@ for (iso.ind in unique(c(gadm.36.adm1$ISO))) {
   }
   f40.worldPop = raster(f40.name)
   
-  f45.name = paste0("./WorldPop_data/", iso.ind, "_f45.tif")
+  f45.name = paste0("../Data/WorldPop_data/", iso.ind, "_f45.tif")
   if (!file.exists(f45.name)) {
     f45.link = paste0(
       "https://data.worldpop.org/GIS/AgeSex_structures/Global_2000_2020/2015/",
@@ -322,7 +322,7 @@ all.30.34 = ggplot(resid.dat, aes(x = f3034, y = resid)) +
     aspect.ratio = 1
   )
 
-iso.30.34 = ggplot(resid.dat.subset, aes(x = f2024, y = resid)) +
+iso.30.34 = ggplot(resid.dat.subset, aes(x = f3034, y = resid)) +
   geom_point() +
   geom_smooth(lwd = 2) +
   facet_wrap( ~ ISO, scales = "free") +
